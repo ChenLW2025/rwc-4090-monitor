@@ -176,10 +176,8 @@
   function renderGpu(gpu, dataValid) {
     var card = el("div", null, "gpu-card");
     var head = el("h2", "GPU " + gpu.index);
-    var allKnown = gpu.utilization_percent !== null &&
-      gpu.memory_used_mib !== null && gpu.memory_total_mib !== null &&
-      gpu.temperature_c !== null && gpu.power_watts !== null &&
-      gpu.error === null;
+    var nullCount = gpuNullMetricCount(gpu);
+    var allKnown = nullCount === 0 && gpu.error === null;
     var stateText, cls;
     if (!dataValid) {
       stateText = "旧读数·非当前有效";
@@ -187,8 +185,17 @@
     } else if (allKnown) {
       stateText = "正常";
       cls = "ok";
+    } else if (nullCount === 5 && gpu.error !== null) {
+      // 全部指标都不可用且带错误：该卡无任何有效读数
+      stateText = "无有效读数";
+      cls = "unknown";
+    } else if (gpu.error !== null || nullCount > 0) {
+      // 只有部分指标缺失（例如仅 power_watts=null）：显存/温度等有效读数
+      // 保留展示，卡片状态准确表述为“部分指标未知”。
+      stateText = "部分指标未知";
+      cls = "unknown";
     } else {
-      stateText = gpu.error ? "指标暂不可用" : "暂无数据";
+      stateText = "无有效读数";
       cls = "unknown";
     }
     head.appendChild(el("span", stateText, "gpu-state " + cls));
@@ -213,8 +220,60 @@
     return card;
   }
 
+  // 样本级错误中与“任务信息未知”直接相关的枚举（其余错误同样不全绿，
+  // 但语义不同，由通用分支处理）。
+  var TASK_UNKNOWN_ERRORS = {
+    COMPUTE_APPS_UNAVAILABLE: true,
+    TASK_INFO_PARTIAL_UNKNOWN: true
+  };
+
+  function gpuMetricKeys() {
+    return ["utilization_percent", "memory_used_mib", "memory_total_mib",
+      "temperature_c", "power_watts"];
+  }
+
+  // K1：统计该卡缺失的指标数；5 项全缺 = 无有效读数，缺一部分 = 部分指标
+  // 未知（其余有效指标必须保留展示，不能统称为“无有效读数”）。
+  function gpuNullMetricCount(gpu) {
+    return gpuMetricKeys().filter(function (k) {
+      return gpu[k] === null;
+    }).length;
+  }
+
+  // 单卡“有任何未知”= 该卡带 error，或任一公开指标为 null。
+  function gpuUnknown(gpu) {
+    return gpu.error !== null || gpuNullMetricCount(gpu) > 0;
+  }
+
+  // K1：汇总样本级错误 + 每卡 error/null 指标。
+  // 任何非 null 的 sample.error 都不允许总体绿色；返回具体问题描述数组，
+  // 无未知返回空数组（才可显示“数据正常”）。
+  function samplePartialUnknown(sample) {
+    if (!sample) return [];
+    var problems = [];
+    if (sample.error) {
+      problems.push(V.COLLECTOR_ERROR_TEXT_ZH[sample.error] ||
+        ("采集器报告异常：" + sample.error));
+    }
+    (sample.gpus || []).forEach(function (gpu) {
+      var nullCount = gpuNullMetricCount(gpu);
+      if (gpu.error) {
+        problems.push("GPU " + gpu.index + "：" +
+          (V.COLLECTOR_ERROR_TEXT_ZH[gpu.error] || gpu.error));
+      }
+      if (!gpu.error && nullCount > 0 && nullCount < 5) {
+        problems.push("GPU " + gpu.index + "：部分指标未知"
+          + "（其余有效指标仍显示）");
+      } else if (!gpu.error && nullCount === 5) {
+        problems.push("GPU " + gpu.index + "：无有效读数");
+      }
+    });
+    return problems;
+  }
+
   function tasksHeaderNote(sample, gpu) {
-    // R11：区分“读不到任务”与“确实无任务”
+    // R11/K1：区分“读不到任务”与“确实无任务”。
+    // 只要样本带任何非 null 错误，任务列表就不能被当作“当前无任务”。
     if (gpu.error === "GPU_NOT_FOUND" || gpu.error === "NVIDIA_SMI_UNAVAILABLE") {
       return "该卡缺失或不可用，任务未知";
     }
@@ -224,48 +283,13 @@
     if (sample.error === "TASK_INFO_PARTIAL_UNKNOWN") {
       return "任务信息可能不完整（部分进程无法读取）";
     }
-    return null;
-  }
-
-  // 这些样本级错误表示“部分信息未知”，但 GPU 指标读数仍有效：
-  // 总体状态条据此显示“部分数据未知”，而不是全绿的“数据正常”。
-  var PARTIAL_UNKNOWN_ERRORS = {
-    COMPUTE_APPS_UNAVAILABLE: true,
-    TASK_INFO_PARTIAL_UNKNOWN: true,
-    GPU_NOT_FOUND: true
-  };
-
-  // H4：单卡“未知”= 该卡带 error，或任一公开指标为 null。
-  function gpuUnknown(gpu) {
-    return !!(gpu.error ||
-      gpu.utilization_percent === null ||
-      gpu.memory_used_mib === null ||
-      gpu.memory_total_mib === null ||
-      gpu.temperature_c === null ||
-      gpu.power_watts === null);
-  }
-
-  // H4：汇总样本级错误 + 每卡 error/null 指标，返回具体问题描述数组；
-  // 无未知返回空数组（才可显示“数据正常”）。
-  function samplePartialUnknown(sample) {
-    if (!sample) return [];
-    var problems = [];
-    if (sample.error && PARTIAL_UNKNOWN_ERRORS[sample.error]) {
-      problems.push(V.COLLECTOR_ERROR_TEXT_ZH[sample.error] || sample.error);
+    if (sample.error) {
+      // COLLECTOR_INTERNAL_ERROR / NVIDIA_SMI_UNAVAILABLE 等任何其他
+      // 合法枚举：任务情况未知，tasks=[] 不能解读为“无任务”。
+      return "采集器报告异常（" + sample.error +
+        "），任务情况未知，不能据此判断无任务";
     }
-    (sample.gpus || []).forEach(function (gpu) {
-      if (gpu.error) {
-        problems.push("GPU " + gpu.index + "：" +
-          (V.COLLECTOR_ERROR_TEXT_ZH[gpu.error] || gpu.error));
-      } else if (gpu.utilization_percent === null ||
-        gpu.memory_used_mib === null ||
-        gpu.memory_total_mib === null ||
-        gpu.temperature_c === null ||
-        gpu.power_watts === null) {
-        problems.push("GPU " + gpu.index + "：部分指标缺失");
-      }
-    });
-    return problems;
+    return null;
   }
 
   function renderTasks(sample, dataValid) {
@@ -287,6 +311,11 @@
     if (sample.error === "COMPUTE_APPS_UNAVAILABLE") {
       box.appendChild(el("p", "任务列表整体暂不可用（采集器未能读取计算应用），" +
         "不能据此判断“无任务”。", "metric-error"));
+    } else if (sample.error && !TASK_UNKNOWN_ERRORS[sample.error]) {
+      // K1：任何其他非 null sample.error 下，tasks=[] 也不能当“无任务”
+      box.appendChild(el("p",
+        "采集器报告异常（" + sample.error + "），任务情况未知，" +
+        "不得据此判断“无任务”。", "metric-error"));
     }
     for (var gi = 0; gi < 2; gi++) {
       var gpu = sample.gpus[gi];
@@ -379,10 +408,15 @@
       panel.classList.add("status-partial");
       icon.textContent = "◐";
       var probList = samplePartialUnknown(g.env.sample);
-      var allGpuUnknown = g.env.sample.gpus.length > 0 &&
-        g.env.sample.gpus.every(gpuUnknown);
-      text.textContent = allGpuUnknown
-        ? "两张 GPU 指标暂不可用（无有效读数）"
+      // K1：只有每张卡的五项指标全部缺失（无任何可读指标）才称“无有效读数”；
+      // 仅部分指标缺失（如只有 power_watts=null）时，显存/温度等读数保留，
+      // 状态条只说“部分数据未知”。
+      var allGpuNoReading = g.env.sample.gpus.length > 0 &&
+        g.env.sample.gpus.every(function (gpu) {
+          return gpuNullMetricCount(gpu) === 5;
+        });
+      text.textContent = allGpuNoReading
+        ? "两张 GPU 无有效读数（指标暂不可用）"
         : "部分数据未知（其余有效读数仍显示）";
       detail.textContent = probList.join("；") + "；采样于 " + fmtAge(ageMs) +
         (state.notice ? "；" + state.notice : "") +
