@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>双 RTX 4090 公开脱敏监控工作台</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="site-header">
+  <h1>双 RTX 4090 公开脱敏监控</h1>
+  <p class="subtitle">只展示公开、脱敏的运行指标；不含用户名、路径、命令行等私有信息</p>
+  <div id="demo-banner" class="demo-banner" hidden>
+    <strong>模拟数据演示（?demo=1）</strong>：以下数据全部由浏览器本地生成，
+    不是真实监控结果。
+    <span id="demo-controls" class="demo-controls">
+      <button type="button" data-demo-state="normal">模拟正常</button>
+      <button type="button" data-demo-state="stale">模拟过期</button>
+      <button type="button" data-demo-state="error">模拟网络错误</button>
+    </span>
+  </div>
+</header>
+
+<main class="container">
+  <!-- 总体状态条 -->
+  <section id="status-panel" class="status-panel status-disconnected"
+           aria-live="polite">
+    <span id="status-icon" class="status-icon">○</span>
+    <span id="status-text">尚未连接</span>
+    <span id="status-detail" class="status-detail"></span>
+  </section>
+
+  <!-- 数据时刻 -->
+  <section class="meta-grid" aria-label="数据时刻">
+    <div class="meta-item">
+      <span class="meta-label">数据采样</span>
+      <span id="meta-sampled" class="meta-value">—</span>
+      <span id="meta-sampled-age" class="meta-sub">—</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-label">数据发布</span>
+      <span id="meta-published" class="meta-value">—</span>
+      <span id="meta-published-age" class="meta-sub">—</span>
+    </div>
+    <div class="meta-item">
+      <span class="meta-label">本次获取</span>
+      <span id="meta-fetched" class="meta-value">—</span>
+      <span id="meta-fetched-sub" class="meta-sub">—</span>
+    </div>
+  </section>
+
+  <!-- GPU 卡片 -->
+  <section class="gpu-grid" id="gpu-grid" aria-label="GPU 指标"></section>
+
+  <!-- 任务显存 -->
+  <section class="tasks-panel" aria-label="任务显存占用">
+    <h2>任务显存占用（随机别名）</h2>
+    <p class="panel-note">别名与用户名、路径、命令行无关，每次采集器重启后重新分配。</p>
+    <div id="tasks-container"></div>
+  </section>
+
+  <!-- 阶段成果 / 下一步 -->
+  <section class="stage-panel">
+    <h2>阶段成果与下一步</h2>
+    <div class="stage-block">
+      <h3>本阶段成果</h3>
+      <p id="stage-achievement"></p>
+    </div>
+    <div class="stage-block">
+      <h3>下一步</h3>
+      <ul id="stage-next"></ul>
+    </div>
+    <div class="stage-cols">
+      <div class="stage-col">
+        <h3>实现交付</h3>
+        <p id="stage-delivery"></p>
+      </div>
+      <div class="stage-col">
+        <h3>部署状态</h3>
+        <p id="stage-deploy"></p>
+      </div>
+      <div class="stage-col">
+        <h3>实验有效性</h3>
+        <p id="stage-validity"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 私有论文 -->
+  <section class="paper-panel">
+    <h2>私有论文稿件</h2>
+    <p class="panel-note">公开页面不包含论文算法细节。</p>
+    <a id="paper-button" class="paper-button" href="#" rel="noopener">
+      查看私有论文（需权限）
+    </a>
+  </section>
+
+  <footer class="site-footer">
+    <p>数据每 15 秒无凭据拉取一次；采样年龄超过 180 秒即标记“已过期”。
+       过期不等于服务器离线。</p>
+    <p id="footer-instance"></p>
+  </footer>
+</main>
+
+<script src="config.js"></script>
+<script src="js/canonical.js"></script>
+<script src="js/validate.js"></script>
+<script src="js/demo.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

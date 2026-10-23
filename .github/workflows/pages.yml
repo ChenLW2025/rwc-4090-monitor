@@ -1,0 +1,50 @@
+# 示例 GitHub Pages 工作流（仅手动触发）。
+#
+# 用法（独立的“公开仓库”里，不要放进私有研究仓库）：
+#   1. 仅复制审核通过的 site/ 目录到公开仓库根目录（不复制私有 Git 历史）；
+#   2. 把本文件放到公开仓库 .github/workflows/pages.yml；
+#   3. 在仓库 Settings → Pages 中选择 GitHub Actions 作为发布来源；
+#   4. 本工作流默认只能通过 Actions 页面 “Run workflow” 手动触发；
+#      telemetry 分支上的高频数据更新绝不会触发站点部署。
+#
+# 注意：telemetry 数据通过独立的 telemetry 分支推送，与站点部署完全解耦；
+# 站点文件（含 config.js）在人工触发时才发布。
+
+name: pages-deploy-manual
+
+on:
+  workflow_dispatch: {}   # 默认仅手动触发；不监听 push，也不监听 telemetry 分支
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          # 只需要站点文件；telemetry 分支不在本工作流内检出。
+
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
+
+      - name: 上传 site 目录
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: 部署到 Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

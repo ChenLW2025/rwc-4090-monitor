@@ -1,0 +1,215 @@
+/* 双 4090 公开监控工作台样式：清爽、手机优先、无外部字体/图片依赖 */
+
+:root {
+  --bg: #f5f7fa;
+  --card: #ffffff;
+  --ink: #1f2933;
+  --ink-soft: #52606d;
+  --line: #e4e7eb;
+  --accent: #1c6b9e;
+  --ok: #2e7d32;
+  --warn: #b26a00;
+  --bad: #c62828;
+  --unknown: #7b8794;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.site-header {
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+  padding: 18px 16px 14px;
+}
+.site-header h1 { font-size: 19px; margin: 0; }
+.subtitle { margin: 6px 0 0; color: var(--ink-soft); font-size: 13px; }
+
+.container {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 14px 14px 40px;
+}
+
+.demo-banner {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+  border-radius: var(--radius);
+  color: #6d4c00;
+  font-size: 13px;
+}
+.demo-controls { margin-left: 8px; white-space: nowrap; }
+.demo-controls button {
+  margin-left: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  border: 1px solid #e0b84c;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+/* 状态条 */
+.status-panel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.status-icon { font-size: 18px; line-height: 1; }
+.status-detail { font-weight: 400; color: var(--ink-soft); font-size: 13px; }
+.status-ok { background: #edf7ed; border-color: #bfe0c1; color: var(--ok); }
+.status-stale { background: #fff6e5; border-color: #ffd99a; color: var(--warn); }
+.status-error { background: #fdecec; border-color: #f3b4b4; color: var(--bad); }
+.status-disconnected { background: #eef1f4; border-color: var(--line);
+  color: var(--unknown); }
+.status-restart { background: #e8f2f9; border-color: #b9d8ee; color: var(--accent); }
+/* A：fresh 但部分信息未知（任务/缺卡）——中性提示，不与“正常/过期/错误”混淆 */
+.status-partial { background: #e6f4f3; border-color: #9fd2d0; color: #0b6a66; }
+.status-partial .status-detail { color: #11756f; }
+
+/* 时刻 */
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.meta-item {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.meta-label { font-size: 12px; color: var(--ink-soft); }
+.meta-value { font-size: 13px; font-weight: 600; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.meta-sub { font-size: 12px; color: var(--ink-soft); }
+
+/* GPU 卡片 */
+.gpu-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.gpu-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+.gpu-card h2 { margin: 0 0 8px; font-size: 16px; }
+.gpu-state { float: right; font-size: 12px; font-weight: 600; }
+.gpu-state.ok { color: var(--ok); }
+.gpu-state.unknown { color: var(--unknown); }
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--line);
+  font-size: 14px;
+}
+.metric-row:last-child { border-bottom: none; }
+.metric-name { color: var(--ink-soft); }
+.metric-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+.metric-value.na { color: var(--unknown); font-weight: 400; }
+.metric-error { font-size: 12px; color: var(--bad); margin-top: 6px; }
+
+/* 任务显存 */
+.tasks-panel, .stage-panel, .paper-panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.tasks-panel h2, .stage-panel h2, .paper-panel h2 {
+  margin: 0 0 8px; font-size: 16px;
+}
+.panel-note { color: var(--ink-soft); font-size: 12px; margin: 0 0 10px; }
+.task-gpu-group { margin-bottom: 12px; }
+.task-gpu-title { font-size: 13px; font-weight: 600; margin: 6px 0; }
+.task-bar-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.task-alias {
+  width: 78px; flex: 0 0 78px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+.task-bar-track {
+  flex: 1; height: 16px; background: #edf0f3; border-radius: 8px;
+  overflow: hidden;
+}
+.task-bar-fill { height: 100%; background: var(--accent); border-radius: 8px; }
+.task-bar-mem { width: 110px; flex: 0 0 110px; text-align: right;
+  font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.tasks-empty { color: var(--ink-soft); font-size: 13px; }
+
+/* 阶段 */
+.stage-block { margin-bottom: 10px; }
+.stage-block h3, .stage-col h3 { margin: 4px 0; font-size: 14px; color: var(--accent); }
+.stage-block ul { margin: 4px 0; padding-left: 20px; }
+.stage-cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+  margin-top: 10px; }
+.stage-col { background: #f8fafc; border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+.stage-col p { margin: 4px 0 0; }
+
+/* 论文按钮 */
+.paper-button {
+  display: inline-block;
+  padding: 9px 18px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  text-decoration: none;
+  font-weight: 600;
+}
+.paper-button.disabled {
+  background: #cbd2d9;
+  color: #52606d;
+  pointer-events: none;
+}
+
+.site-footer { color: var(--ink-soft); font-size: 12px; margin-top: 16px; }
+.site-footer p { margin: 4px 0; }
+
+/* 手机 */
+@media (max-width: 640px) {
+  .gpu-grid { grid-template-columns: 1fr; }
+  .meta-grid { grid-template-columns: 1fr; }
+  .stage-cols { grid-template-columns: 1fr; }
+  .task-bar-mem { width: 88px; flex-basis: 88px; }
+  .site-header h1 { font-size: 17px; }
+}
+
+/* R10：旧读数（非当前有效）整体置灰，避免被误读为实时数据 */
+.gpu-card.stale-reading,
+.task-gpu-group.stale-reading {
+  opacity: 0.55;
+  border-style: dashed;
+}
+.gpu-card.stale-reading .gpu-state {
+  background: #8a8f99;
+  color: #fff;
+}
