@@ -1,7 +1,7 @@
 /* 公开部署配置：仅含公开快照地址、私有论文入口及已核实阶段说明。 */
 window.RWC_CONFIG = {
-  "telemetryUrl": "https://raw.githubusercontent.com/ChenLW2025/rwc-4090-monitor/telemetry/telemetry/latest.json",
-  "paperUrl": "https://github.com/ChenLW2025/mca-paper/blob/codex/mca-rwc-innovation/workstreams/rwc_4090/paper/manuscript.md",
+  "telemetryUrl": "https://raw.githubusercontent.com/linweichen-ai/rwc-4090-monitor/telemetry/telemetry/latest.json",
+  "paperUrl": "https://github.com/linweichen-ai/mca-paper/blob/codex/mca-rwc-innovation/workstreams/rwc_4090/paper/manuscript.md",
   "refreshIntervalMs": 15000,
   "fetchTimeoutMs": 8000,
   "staleAfterMs": 180000,

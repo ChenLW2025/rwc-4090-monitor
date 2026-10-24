@@ -1,6 +1,6 @@
 # 双 RTX 4090 公开监控与进度
 
-**[打开监控网页](https://chenlw2025.github.io/rwc-4090-monitor/)** · [查看私有论文 v4 初稿](https://github.com/ChenLW2025/mca-paper/blob/codex/mca-rwc-innovation/workstreams/rwc_4090/paper/manuscript.md)
+**[打开监控网页](https://linweichen-ai.github.io/rwc-4090-monitor/)** · [查看私有论文 v4 初稿](https://github.com/linweichen-ai/mca-paper/blob/codex/mca-rwc-innovation/workstreams/rwc_4090/paper/manuscript.md)
 
 2026-10-24阶段更新。网页已接入真实脱敏快照，但持续自动发布尚未启用，旧数据会明确显示“已过期”。
 
@@ -13,4 +13,4 @@
 
 目标节奏：服务器每20秒采集、本机每120秒发布、网页每15秒请求；采样达到180秒显示过期。请求频率不等于端到端数据更新保证，过期不能直接解释为服务器离线。
 
-本公开仓库仅保存脱敏站点、进度和审核后的快照，不包含私有研究历史、原图、权重、服务器地址、进程ID或凭据。[详细研究记录（私有）](https://github.com/ChenLW2025/mca-paper/tree/codex/mca-rwc-innovation/workstreams/rwc_4090)。
+本公开仓库仅保存脱敏站点、进度和审核后的快照，不包含私有研究历史、原图、权重、服务器地址、进程ID或凭据。[详细研究记录（私有）](https://github.com/linweichen-ai/mca-paper/tree/codex/mca-rwc-innovation/workstreams/rwc_4090)。
