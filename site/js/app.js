@@ -576,14 +576,18 @@
     return row;
   }
 
-  function renderGpu(gpu, dataValid) {
+  function renderGpu(gpu, dataValid, expired) {
     var card = el("div", null, "gpu-card");
     var head = el("h2", "GPU " + gpu.index);
     var nullCount = gpuNullMetricCount(gpu);
     var allKnown = nullCount === 0 && gpu.error === null;
     var stateText, cls;
     if (!dataValid) {
-      stateText = "旧读数·非当前有效";
+      // L3e：保留读数分两种——真实满 180 秒才称“已过期”；新鲜窗口内的
+      // 保留读数只称“当前状态未确认”。
+      stateText = expired
+        ? "保留读数·已过期"
+        : "保留读数·当前状态未确认";
       cls = "unknown";
     } else if (allKnown) {
       stateText = "正常";
@@ -696,7 +700,7 @@
     return null;
   }
 
-  function renderTasks(sample, dataValid) {
+  function renderTasks(sample, dataValid, expired) {
     var box = document.getElementById("tasks-container");
     box.textContent = "";
     if (!sample) {
@@ -704,8 +708,14 @@
       return;
     }
     if (!dataValid) {
-      var note = el("p", "数据当前无效（过期/网络错误），以下为旧读数，" +
-        "不代表当前任务情况。", "tasks-empty");
+      // L3e：新鲜窗口内“本次更新未采用、保留读数但状态未确认”；真实满
+      // 180 秒才称“过期”。
+      var noteText = expired
+        ? "监控数据已过期（采样年龄满 180 秒），以下为保留读数，" +
+          "不代表当前任务情况。"
+        : "本次更新未采用，保留上次通过校验的读数；以下为保留读数" +
+          "（当前状态未确认），不代表当前任务情况。";
+      var note = el("p", noteText, "tasks-empty");
       box.appendChild(note);
     }
     if (sample.error === "TASK_INFO_PARTIAL_UNKNOWN") {
@@ -777,22 +787,41 @@
     // R10：只有 mode 为 ok 且年龄未过期才是“当前有效”
     var dataValid = state.mode === "ok" && g !== null &&
       ageMs !== null && ageMs < cfg.staleAfterMs;
+    // L3e：只有采样年龄真实达到 180 秒才称“过期”；本次更新失败但保留
+    // 读数仍在新鲜窗口内时，只能说“当前状态未确认”，不能称过期。
+    var expired = g !== null && ageMs !== null &&
+      ageMs >= cfg.staleAfterMs;
+
+    var errorReasons = state.errors.map(function (e) {
+      return V.ERROR_TEXT_ZH[e.code] || e.code;
+    }).join("；");
 
     // 状态条
     if (state.mode === "error" && !g) {
       panel.classList.add("status-error");
       icon.textContent = "✕";
       text.textContent = "无法显示监控数据";
-      detail.textContent = state.errors.map(function (e) {
-        return V.ERROR_TEXT_ZH[e.code] || e.code;
-      }).join("；");
+      detail.textContent = errorReasons;
     } else if (state.mode === "error" && g) {
-      panel.classList.add("status-error");
-      icon.textContent = "△";
-      text.textContent = "本次数据有误，显示的是旧读数（非当前有效）";
-      detail.textContent = state.errors.map(function (e) {
-        return V.ERROR_TEXT_ZH[e.code] || e.code;
-      }).join("；");
+      if (expired) {
+        // L3e：本次更新未采用且保留读数已真实满 180 秒：称“过期”，
+        // 同时保留具体原因；错误状态样式不变。
+        panel.classList.add("status-error");
+        icon.textContent = "⏱";
+        text.textContent = "监控数据已过期（本次更新未采用）";
+        detail.textContent = "最后采样于 " + fmtAge(ageMs) +
+          "；过期不代表服务器离线，可能是采集/发布链路暂停。" +
+          "最近一次更新未采用：" + errorReasons + "；保留上次通过" +
+          "校验的读数。";
+      } else {
+        // L3e：本次更新失败/未采用，但保留的读数仍在 180 秒新鲜窗口内：
+        // 保留读数、明确当前状态未确认，不冒充“数据正常”，也不提前称过期。
+        panel.classList.add("status-error");
+        icon.textContent = "△";
+        text.textContent = "本次更新未采用，保留上次通过校验的读数";
+        detail.textContent = errorReasons + "；采样于 " + fmtAge(ageMs) +
+          "；保留读数在 180 秒新鲜窗口内，但当前状态未确认。";
+      }
     } else if (!g) {
       panel.classList.add("status-disconnected");
       icon.textContent = "○";
@@ -801,6 +830,7 @@
         ? "尚未收到公开数据；无真实数据时不会用样例冒充。"
         : "未配置公开数据地址（telemetryUrl），且无真实数据，不显示样例。";
     } else if (!dataValid) {
+      // mode=ok 但采样年龄真实满 180 秒（无新样本、重复发布不续命）
       panel.classList.add("status-stale");
       icon.textContent = "⏱";
       text.textContent = "监控数据已过期";
@@ -847,7 +877,7 @@
     grid.textContent = "";
     if (g) {
       g.env.sample.gpus.forEach(function (gpu) {
-        grid.appendChild(renderGpu(gpu, dataValid));
+        grid.appendChild(renderGpu(gpu, dataValid, expired));
       });
     } else {
       for (var i = 0; i < 2; i++) {
@@ -858,7 +888,7 @@
       }
     }
 
-    renderTasks(g ? g.env.sample : null, dataValid);
+    renderTasks(g ? g.env.sample : null, dataValid, expired);
 
     // 时刻
     var sampled = document.getElementById("meta-sampled");
@@ -876,8 +906,9 @@
       var srcText = g.source === "api"
         ? "GitHub Contents API 备用源"
         : "raw 轮询";
-      fetchedSub.textContent = "本次请求获取时间（来源：" + srcText +
-        "；cache:no-store 不代表 CDN 秒级鲜度，以采样年龄为准）";
+      fetchedSub.textContent = "最近一次通过校验的数据获取时间／来源：" +
+        srcText +
+        "（cache:no-store 不代表 CDN 秒级鲜度，以采样年龄为准）";
     } else {
       sampled.textContent = "—";
       sampledAge.textContent = "—";
