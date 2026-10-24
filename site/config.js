@@ -1,5 +1,5 @@
 /* 公开部署配置：仅含公开快照地址、私有论文入口及已核实阶段说明。 */
-window.RWC_ASSET_VERSION = "20261024-l3e-live1";
+window.RWC_ASSET_VERSION = "20261024-status7";
 window.RWC_CONFIG = {
   "telemetryUrl": "https://raw.githubusercontent.com/linweichen-ai/rwc-4090-monitor/telemetry/telemetry/latest.json",
   "contentsApiUrl": "https://api.github.com/repos/linweichen-ai/rwc-4090-monitor/contents/telemetry/latest.json",
@@ -10,14 +10,14 @@ window.RWC_CONFIG = {
   "futureToleranceMs": 60000,
   "apiFallbackAgeMs": 120000,
   "stage": {
-    "achievement": "发布器诊断版已通过验收并完成切换，首次失败后已自动恢复发布。现在已取得系统启动错误码，具体原因继续排查；论文仍为原有7页v4 PDF。",
+    "achievement": "监控文案修订已上线，线上文件与验收版本一致；实际页面已观察到过期读数自动更新为新样本。研究的两项缺失输入检查通过，论文保持7页v4 PDF。",
     "nextSteps": [
-      "核查发布器间歇失败与进程启动方式的关系。",
-      "继续核验浏览器更新和故障恢复，保留准确的采样年龄与过期标记。",
-      "完成研究程序的超时边界修订和独立验收，再安排正式20图实验。"
+      "继续排查发布器间歇失败，按采样年龄判断当前数据是否有效。",
+      "处理验收执行中断，完成坏缓存检查后，再决定是否启动已准备的20图实验。",
+      "保留所有失败和未完成记录，同步私有GitHub；论文只纳入已经验证的结果。"
     ],
-    "delivery": "备用通道已在实际浏览器读到更新快照；保留读数的文案已通过独立验收并澄清。持续实时性仍未通过，研究新包正在独立验收；这些工程进展不等于科研方法有效。",
+    "delivery": "页面已明确标示最近有效获取、失败原因和过期读数。研究超时边界窄修复通过，两项缺失输入检查通过；坏缓存验收仍未完成，不能把它写成通过。",
     "deploy": "本机在线时每120秒自动发布，未设置开机自启动；电脑离线时更新暂停。备用通道用于缓解缓存延迟，请以采样时刻和180秒过期标记为准。",
-    "validity": "正式20图实验尚未运行。当前7页v4 PDF是私有初稿，未新增实验结论，也不是投稿定稿。公开页面只展示脱敏运行状况和进度。"
+    "validity": "新的20图实验尚未运行。45秒补充验收仅完成输入准备，执行因平台检查中断。当前7页v4 PDF仍是私有初稿，未新增科研结论，持续实时性也尚未通过验收。"
   }
 };
