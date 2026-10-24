@@ -258,7 +258,12 @@
     }
     var inst = sample.collector_instance_id;
     var seq = sample.sample_seq;
-    var restarted = inst !== this.instance;
+    // 首次观察（本页面尚无任何已接受样本）不算“重启”：页面可能在采集器
+    // 已运行很久之后才打开，首个样本序号也未必是 1，不能无证据声称
+    // “采集器刚重启、序号从 1 开始”。只有已经接受过旧实例、且新实例
+    // 与其不同时，才是真正的实例变化（restarted=true）。
+    var firstObserved = this.instance === null;
+    var restarted = !firstObserved && inst !== this.instance;
     if (restarted) {
       if (this.seenInstances[inst]) {
         // 已退休实例回流：旧响应，拒绝
@@ -287,6 +292,7 @@
     return {
       errors: errors,
       restarted: restarted,
+      firstObserved: firstObserved,
       pending: {
         instance: inst,
         seq: seq,

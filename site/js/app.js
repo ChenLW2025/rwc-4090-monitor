@@ -12,6 +12,10 @@
  *   “数据正常/当前有效”结论，旧读数明确标记（R10）。
  * - 任务信息读不到与“确实无任务”严格区分（R11）。
  * - 动态内容一律 createElement/textContent，任务名绝不作为 HTML。
+ * - L3：GitHub Contents API 仅作为“默认关闭、显式配置”的备用源；
+ *   只有尚无有效样本或采样年龄≥120s 且冷却到期时才用 API 替代本轮
+ *   raw，每轮仍至多一个请求；匿名额度有限，冷却/限流规则见 fetchOnce。
+ *   该备用源只尽力缓解缓存延迟，不承诺消除所有过期窗口。
  */
 (function () {
   "use strict";
@@ -23,7 +27,7 @@
 
   var state = {
     mode: "disconnected",
-    lastGood: null,   // {env, fetchedMs, sampledMs, publishedMs, hash}
+    lastGood: null,   // {env, fetchedMs, sampledMs, publishedMs, hash, source}
     ageTracker: new V.SampleAgeTracker(),
     inflight: false,
     requestSeq: 0,
@@ -34,6 +38,19 @@
     demoSource: null,
     demoState: "normal",
     urlConfigured: false
+  };
+
+  // L3：GitHub Contents API 备用源的冷却/限流状态（无 token 匿名访问）。
+  var API_COOLDOWN_MIN_MS = 120000;   // 每次尝试（含失败）至少冷却 120s
+  var API_BACKOFF_MAX_MS = 600000;    // 无有效限流头时的有限退避上限
+  var LS_KEY_PREFIX = "rwc-api-cooldown:";
+  var api = {
+    attempts: 0,
+    memoryNextAllowedMs: 0,
+    backoffMs: 0,
+    storageOk: null,       // null=未探测，true/false
+    storageNote: "",
+    locksOk: null          // Web Locks 是否可用（跨标签原子预约）
   };
 
   function el(tag, text, className) {
@@ -64,8 +81,9 @@
 
   // ------------------------------------------------------ 数据接收（R08）
 
-  async function processEnvelope(env) {
+  async function processEnvelope(env, source) {
     var now = Date.now();
+    source = source === "api" ? "api" : "raw";
     // 1) 全部结构/数值/时间校验
     var errors = V.validateEnvelope(env, now);
     var hash = null;
@@ -103,13 +121,18 @@
       fetchedMs: nowWall,
       sampledMs: sampledMs,
       publishedMs: V.parseIsoZ(env.published_at),
-      hash: hash
+      hash: hash,
+      source: source
     };
     state.errors = [];
     state.mode = "ok";
+    // 只有“已接受过旧实例且新实例不同”才提示实例变化；首次观察不提示
+    // 重启（页面可能在采集器运行很久后才打开，首个序号未必是 1），
+    // 也不声称序号从 1 开始——当前序号以样本实际字段为准。
     state.notice = guardResult.restarted
-      ? "采集器已重启（新实例 " + env.sample.collector_instance_id +
-        "），采样序号已重新从 1 开始"
+      ? "检测到采集器实例变化（新实例 " +
+        env.sample.collector_instance_id + "，当前采样序号 " +
+        env.sample.sample_seq + "）"
       : null;
   }
 
@@ -118,8 +141,9 @@
   // L2：每轮缓存区分。cache:no-store 只表达浏览器意图，不能保证 GitHub
   // Pages/CDN 或中间层的端到端新鲜度（实测 raw max-age=300 会让页面长期
   // 读到旧 publication）。因此每次轮询都在 URL 上附加“轮询时间片”参数：
-  // 片长等于轮询周期（默认 15s），每个轮询周期的 URL 必然不同，从而明确
-  // 穿透中间缓存；参数值不参与任何数据判定，绝不用于给旧样本续命。
+  // 片长等于轮询周期（默认 15s），使同一轮询周期的 URL 与相邻周期不同，
+  // 以尽力避免命中中间缓存；这只是尽力而为，不能保证穿透所有缓存层（API
+  // 响应同样有 max-age）。参数值不参与任何数据判定，绝不用于给旧样本续命。
   // 正确处理已有 query（用 & 追加）与 fragment（保持在末尾）；key/value
   // 经 URLSearchParams 编码（URL 安全）。
   function buildPollUrl(rawUrl, nowMs) {
@@ -130,16 +154,326 @@
     u.searchParams.set("_rwc_poll", String(slice));
     return u.toString();
   }
+
+  // L3：GitHub Contents API 备用 URL。强制 ref=telemetry，追加时间片
+  // 尽力避免缓存；返回的是“要请求的完整 URL”，不携带任何 token，也不会
+  // 去再请求响应中的 download_url。
+  function buildApiUrl(apiUrl, nowMs) {
+    var base = window.location && window.location.href
+      ? window.location.href : "http://localhost/";
+    var u = new URL(apiUrl, base);
+    u.searchParams.set("ref", "telemetry");
+    u.searchParams.set("_rwc_poll",
+      String(Math.floor(nowMs / cfg.refreshIntervalMs)));
+    return u.toString();
+  }
+
   // 暴露给测试/调试：记录每轮实际请求 URL（测试可连续捕获）
   window.RWCBuildPollUrl = buildPollUrl;
+  window.RWCBuildApiUrl = buildApiUrl;
   window.__RWC_REQUEST_URLS__ = [];
+  window.__RWC_REQUESTS__ = [];
+  window.__RWC_API_STATE__ = api;
+
+  // -------------------------------------------- L3 冷却/限流（跨标签）
+  function apiStorageKey() {
+    var host = "unknown";
+    try {
+      host = new URL(cfg.contentsApiUrl,
+        window.location.href || "http://localhost/").host;
+    } catch (e) { host = "unknown"; }
+    return LS_KEY_PREFIX + host;
+  }
+
+  function detectStorage() {
+    if (api.storageOk !== null) return api.storageOk;
+    try {
+      var ls = window.localStorage;
+      var probe = "__rwc_ls_probe__";
+      ls.setItem(probe, "1");
+      ls.removeItem(probe);
+      api.storageOk = true;
+    } catch (e) {
+      api.storageOk = false;
+    }
+    return api.storageOk;
+  }
+
+  // Web Locks（navigator.locks）可用性：跨标签的“检查冷却 + 预约”必须靠
+  // 同源独占锁才能原子；没有它就只能尽力而为。
+  function detectLocks() {
+    if (api.locksOk !== null) return api.locksOk;
+    try {
+      api.locksOk = !!(window.navigator && window.navigator.locks &&
+        typeof window.navigator.locks.request === "function");
+    } catch (e) {
+      api.locksOk = false;
+    }
+    return api.locksOk;
+  }
+
+  // 汇总跨标签保障的真实能力，不可用时诚实说明退化，不默默声称安全。
+  function apiFeatureNote() {
+    var storageOk = detectStorage();
+    var locksOk = detectLocks();
+    if (storageOk && locksOk) {
+      api.storageNote = "";
+    } else if (storageOk && !locksOk) {
+      api.storageNote = "GitHub Contents API 备用源的冷却可经 localStorage "
+        + "共享，但当前环境没有 Web Locks，无法保证多标签并发启动时“检查+"
+        + "预约”原子：多个标签同时发起可能各打一次 API，冷却共享为尽力而"
+        + "为；单标签冷却仍严格生效。";
+    } else {
+      api.storageNote = "GitHub Contents API 备用源的限流冷却无法经 "
+        + "localStorage 跨标签共享（当前环境"
+        + (locksOk ? "无存储" : "无存储且无 Web Locks")
+        + "），仅在本标签生效；多标签/多设备共享 IP 时不保证零限流。";
+    }
+    return api.storageNote;
+  }
+
+  function apiLockKey() {
+    return apiStorageKey() + ":lock";
+  }
+
+  // 锁在运行期被证明不可用（request 抛错或拒绝）：立即标记降级并刷新
+  // 能力提示，后续全部走本标签内存冷却，不产生未处理拒绝。
+  function invalidateLocks() {
+    api.locksOk = false;
+    apiFeatureNote();
+  }
+
+  // 存储在探测通过后又读写异常（配额/隐私模式变化）：同样诚实降级。
+  function invalidateStorage() {
+    api.storageOk = false;
+    apiFeatureNote();
+  }
+
+  // 在同源独占 Web Lock 内执行临界区（跨标签互斥）。锁请求本身拒绝或
+  // 抛错时，标记降级并无锁直接执行临界区，保证已收到的限流头/冷却不被
+  // 锁错误吞掉，也不产生未处理 Promise 拒绝。
+  function withApiLock(fn) {
+    if (!detectLocks()) {
+      return Promise.resolve(fn());
+    }
+    var p;
+    try {
+      p = window.navigator.locks.request(apiLockKey(), function () {
+        return fn();
+      });
+    } catch (e) {
+      invalidateLocks();
+      return Promise.resolve(fn());
+    }
+    if (!p || typeof p.then !== "function") {
+      invalidateLocks();
+      return Promise.resolve(fn());
+    }
+    return Promise.resolve(p).catch(function () {
+      invalidateLocks();
+      return fn();
+    });
+  }
+
+  function apiCooldownRead(now) {
+    var next = api.memoryNextAllowedMs;
+    if (detectStorage()) {
+      try {
+        var raw = window.localStorage.getItem(apiStorageKey());
+        if (raw) {
+          var v = JSON.parse(raw);
+          if (v && typeof v.nextAllowedMs === "number"
+              && isFinite(v.nextAllowedMs)) {
+            next = Math.max(next, v.nextAllowedMs);
+            api.memoryNextAllowedMs = Math.max(api.memoryNextAllowedMs,
+              v.nextAllowedMs);
+          }
+        }
+      } catch (e) {
+        // 探测后读异常：存储不再可靠，诚实降级，只按本标签内存冷却
+        invalidateStorage();
+      }
+    }
+    return next;
+  }
+
+  // 仅在锁内调用：取“当前值与新值的更晚者”，绝不覆盖其它标签已写入的
+  // 更晚期限；任何成功/错误都不能缩短已预约的冷却。
+  function apiCooldownCommit(now, nextMs) {
+    var current = apiCooldownRead(now);
+    nextMs = Math.max(nextMs, current);
+    if (nextMs < now + API_COOLDOWN_MIN_MS) {
+      nextMs = now + API_COOLDOWN_MIN_MS;   // 任何尝试至少冷却 120s
+    }
+    api.memoryNextAllowedMs = Math.max(api.memoryNextAllowedMs, nextMs);
+    if (detectStorage()) {
+      try {
+        window.localStorage.setItem(apiStorageKey(), JSON.stringify({
+          nextAllowedMs: api.memoryNextAllowedMs,
+          updatedAt: now
+        }));
+      } catch (e) {
+        // 探测后写异常（配额/隐私模式）：标记降级，内存冷却仍严格有效
+        invalidateStorage();
+      }
+    }
+    return api.memoryNextAllowedMs;
+  }
+
+  function finiteNonNegMs(v) {
+    return typeof v === "number" && isFinite(v) && v >= 0;
+  }
+
+  // 解析 x-ratelimit-reset / x-ratelimit-remaining / retry-after，
+  // 返回“建议的下一次可请求时刻（ms）”；没有可用头返回 0。receiptMs 为
+  // 响应实际收到时刻（相对 Retry-After 从此时起算），status 为 HTTP 状态。
+  function apiRateLimitNext(headers, receiptMs, status) {
+    var next = 0;
+    function h(name) {
+      try {
+        return headers && headers.get ? headers.get(name) : null;
+      } catch (e) { return null; }
+    }
+    // Retry-After（秒数或 HTTP-date）：相对秒数从响应收到时刻计算
+    var retry = h("retry-after");
+    if (retry !== null && retry !== undefined && String(retry).trim() !== "") {
+      var r = String(retry).trim();
+      if (/^\d+$/.test(r)) {
+        var relMs = receiptMs + Number(r) * 1000;
+        if (finiteNonNegMs(relMs)) next = Math.max(next, relMs);
+      } else {
+        var t = Date.parse(r);
+        if (!isNaN(t) && isFinite(t)) next = Math.max(next, t);
+      }
+    }
+    var reset = h("x-ratelimit-reset");
+    var remaining = h("x-ratelimit-remaining");
+    var resetMs = 0;
+    if (reset && /^\s*\d+\s*$/.test(String(reset))) {
+      var parsed = Number(reset) * 1000 + 1000;
+      if (finiteNonNegMs(parsed)) resetMs = parsed;
+    }
+    // 403/429：使用所有有效 Reset（即使 remaining 是正数）；
+    // 200：只有 remaining=0 才等到 Reset，避免每次成功都等到整小时。
+    if (resetMs) {
+      if (status === 403 || status === 429) {
+        next = Math.max(next, resetMs);
+      } else if (status === 200) {
+        if (remaining !== null && remaining !== undefined
+            && /^\s*\d+\s*$/.test(String(remaining))
+            && Number(remaining) === 0) {
+          next = Math.max(next, resetMs);
+        }
+      }
+    }
+    return next;
+  }
+
+  // 无有效限流头的有限指数退避（120s→240s→480s…上限 600s）。
+  // 从响应收到时刻起算（请求在途耗时不白送）。
+  function apiBackoffTarget(receiptMs) {
+    api.backoffMs = api.backoffMs === 0
+      ? API_COOLDOWN_MIN_MS
+      : Math.min(api.backoffMs * 2, API_BACKOFF_MAX_MS);
+    return receiptMs + api.backoffMs;
+  }
+
+  // 锁内计算一次尝试（成功/失败）后的最终冷却时刻并原子提交。
+  // startedAt 为请求开始时刻（120s 基础预约从那时起算）；receiptMs 为
+  // 响应收到时刻（相对 Retry-After 与无头退避从此时起算）；最终取更晚
+  // 期限，成功/错误都不缩短。
+  function noteApiAttemptLocked(startedAt, receiptMs, kind, resp) {
+    api.attempts += 1;
+    var baseReservation = startedAt + API_COOLDOWN_MIN_MS;
+    var headers = resp && resp.headers;
+    var status = resp && resp.status;
+    var limitNext = headers ? apiRateLimitNext(headers, receiptMs, status) : 0;
+    var target;
+    if (kind === "rate-limited" || kind === "5xx"
+        || kind === "network" || kind === "timeout") {
+      if (limitNext > receiptMs) {
+        api.backoffMs = 0;
+        target = Math.max(baseReservation, limitNext);
+      } else {
+        // 没有有效头：有限退避，且不短于基础预约
+        target = Math.max(baseReservation, apiBackoffTarget(receiptMs));
+      }
+    } else {
+      // ok / bad-data / 404：不短于基础预约。限流是响应约束，不能随
+      // JSON/schema/hash/序号验证失败丢失：200 且 remaining=0（含坏 JSON、
+      // 校验失败等 body 失败路径）同样等到 reset；普通 200 正余额时
+      // limitNext 已为 0，不会因此等到整小时。
+      api.backoffMs = 0;
+      target = Math.max(baseReservation,
+        (limitNext > receiptMs && (kind === "ok" || kind === "bad-data"))
+          ? limitNext : 0,
+        receiptMs + API_COOLDOWN_MIN_MS);
+    }
+    return apiCooldownCommit(receiptMs, target);
+  }
+
+  function noteApiAttempt(startedAt, receiptMs, kind, resp) {
+    return withApiLock(function () {
+      return noteApiAttemptLocked(startedAt, receiptMs, kind, resp);
+    });
+  }
+
+  // 请求开始前在同源锁内原子预约：检查冷却 + 写入至少 120s 的基础冷却。
+  // 返回 true 表示本轮可以发 API；false 表示冷却未到（含并发中被其它
+  // 标签抢先预约），本轮应回退为 raw。
+  function reserveApiAttempt(now) {
+    function check() {
+      if (now < apiCooldownRead(now)) return false;
+      apiCooldownCommit(now, now + API_COOLDOWN_MIN_MS);
+      return true;
+    }
+    // withApiLock 自身会在锁拒绝/抛错时标记降级并无锁执行 check
+    if (detectLocks()) return withApiLock(check);
+    apiFeatureNote();
+    return Promise.resolve(check());
+  }
+
+  function currentSampleAgeMs(now) {
+    if (!state.lastGood) return null;
+    return state.ageTracker.ageMs(now, performance.now());
+  }
+
+  // L3：本轮是否用 API 替代 raw。条件：显式配置 + （尚无有效样本 或
+  // 采样年龄≥120s）+ 冷却到期；否则继续 raw。每轮仍只发一个请求。
+  function chooseSource(now) {
+    if (!cfg.contentsApiUrl) return "raw";
+    var age = currentSampleAgeMs(now);
+    var eligible = state.lastGood === null ||
+      (age !== null && age >= cfg.apiFallbackAgeMs);
+    if (!eligible) return "raw";
+    if (now < apiCooldownRead(now)) return "raw";
+    return "api";
+  }
+  window.RWCChooseSource = chooseSource;
 
   async function fetchOnce() {
     if (state.inflight) return;            // 单请求在途
     state.inflight = true;
     var mySeq = ++state.requestSeq;
-    var requestUrl = buildPollUrl(cfg.telemetryUrl, Date.now());
+    var startedAt = Date.now();
+    var source = chooseSource(startedAt);
+    // L3c：发 API 请求前，先在同源 Web Lock 内原子“检查冷却 + 预约至少
+    // 120s 基础冷却”。若并发中被其它标签抢先预约，本轮回退为 raw。
+    if (source === "api") {
+      var reserved = await reserveApiAttempt(startedAt);
+      if (mySeq !== state.requestSeq) { state.inflight = false; return; }
+      if (!reserved) source = "raw";
+    }
+    var requestUrl, acceptType;
+    if (source === "api") {
+      requestUrl = buildApiUrl(cfg.contentsApiUrl, startedAt);
+      acceptType = "application/vnd.github.raw+json"; // 直接要文件内容
+    } else {
+      requestUrl = buildPollUrl(cfg.telemetryUrl, startedAt);
+      acceptType = "application/json";
+    }
     window.__RWC_REQUEST_URLS__.push(requestUrl);
+    window.__RWC_REQUESTS__.push({ source: source, url: requestUrl });
     var controller = new AbortController();
     var timer = setTimeout(function () { controller.abort(); },
                            cfg.fetchTimeoutMs);
@@ -152,27 +486,75 @@
         method: "GET",
         cache: "no-store",
         credentials: "omit",
-        headers: { "Accept": "application/json" },
+        headers: { "Accept": acceptType },
         signal: controller.signal
       });
       if (mySeq !== state.requestSeq) return;  // 旧响应，丢弃
-      if (resp.status === 404) { failFetch(E.HTTP_404); return; }
-      if (!resp.ok) { failFetch(E.HTTP_ERROR, "HTTP " + resp.status); return; }
+      var receiptMs = Date.now();
+      if (source === "api") {
+        // 403/429：遵从限流头/退避；5xx/304 等也计入尝试，绝不假设 304
+        // 不占额度。
+        if (resp.status === 403 || resp.status === 429) {
+          await noteApiAttempt(startedAt, receiptMs, "rate-limited", resp);
+          failFetch(E.HTTP_ERROR, "HTTP " + resp.status +
+            "（Contents API 限流，已按 Reset/Retry-After 冷却）");
+          return;
+        }
+        if (resp.status === 404) {
+          await noteApiAttempt(startedAt, receiptMs, "404", resp);
+          failFetch(E.HTTP_404);
+          return;
+        }
+        if (!resp.ok || resp.status === 304) {
+          await noteApiAttempt(startedAt, receiptMs,
+            resp.status >= 500 ? "5xx" : "network", resp);
+          failFetch(E.HTTP_ERROR, "HTTP " + resp.status +
+            (resp.status === 304 ? "（304 不视为免费成功）" : ""));
+          return;
+        }
+      } else if (resp.status === 404) {
+        failFetch(E.HTTP_404);
+        return;
+      } else if (!resp.ok) {
+        failFetch(E.HTTP_ERROR, "HTTP " + resp.status);
+        return;
+      }
       var text = await resp.text();
+      receiptMs = Date.now();
       var env;
       try {
         env = JSON.parse(text);
       } catch (e) {
+        if (source === "api") {
+          await noteApiAttempt(startedAt, receiptMs, "bad-data", resp);
+        }
         failFetch(E.BAD_JSON);
         return;
       }
       if (mySeq !== state.requestSeq) return;
-      await processEnvelope(env);
+      await processEnvelope(env, source);
+      if (mySeq !== state.requestSeq) return;
+      if (source === "api") {
+        // 坏数据（processEnvelope 已把 mode 置 error）同样计入冷却；
+        // 成功/remaining=0 也按 120s~reset 安排。
+        if (state.mode === "error") {
+          await noteApiAttempt(startedAt, receiptMs, "bad-data", resp);
+        } else {
+          await noteApiAttempt(startedAt, receiptMs, "ok", resp);
+        }
+      }
     } catch (e) {
       if (mySeq !== state.requestSeq) return;
+      var errReceiptMs = Date.now();
       if (e && e.name === "AbortError") {
+        if (source === "api") {
+          await noteApiAttempt(startedAt, errReceiptMs, "timeout", null);
+        }
         failFetch(E.FETCH_TIMEOUT);
       } else {
+        if (source === "api") {
+          await noteApiAttempt(startedAt, errReceiptMs, "network", null);
+        }
         failFetch(E.FETCH_NETWORK_ERROR);
       }
     } finally {
@@ -446,7 +828,7 @@
     } else if (state.notice) {
       panel.classList.add("status-restart");
       icon.textContent = "↻";
-      text.textContent = "数据正常（采集器刚重启）";
+      text.textContent = "数据正常（检测到采集器实例变化）";
       detail.textContent = state.notice;
     } else {
       panel.classList.add("status-ok");
@@ -454,6 +836,10 @@
       text.textContent = "数据正常";
       detail.textContent = "采样于 " + fmtAge(ageMs) +
         "（仅公开脱敏指标）";
+    }
+    // L3：localStorage 不可用时，诚实说明跨标签冷却只在本标签生效
+    if (cfg.contentsApiUrl && api.storageNote) {
+      detail.textContent += "；" + api.storageNote;
     }
 
     // GPU 卡片（R10：无效时统一旧读数样式）
@@ -487,8 +873,11 @@
       published.textContent = fmtLocal(g.publishedMs);
       publishedAge.textContent = "发布于 " + fmtAge(nowWall - g.publishedMs);
       fetched.textContent = fmtLocal(g.fetchedMs);
-      fetchedSub.textContent = "本次请求获取时间（cache:no-store 不代表" +
-        "CDN 秒级鲜度，以采样年龄为准）";
+      var srcText = g.source === "api"
+        ? "GitHub Contents API 备用源"
+        : "raw 轮询";
+      fetchedSub.textContent = "本次请求获取时间（来源：" + srcText +
+        "；cache:no-store 不代表 CDN 秒级鲜度，以采样年龄为准）";
     } else {
       sampled.textContent = "—";
       sampledAge.textContent = "—";
@@ -593,7 +982,12 @@
     }
     document.getElementById("demo-banner").hidden = true;
     state.urlConfigured = !!cfg.telemetryUrl;
+    if (cfg.contentsApiUrl) {
+      // 提前探测 localStorage 与 Web Locks 可用性，诚实显示保障退化
+      apiFeatureNote();
+    }
     if (!cfg.telemetryUrl) {
+      // 主 raw 地址未配置时保持“尚未连接”；备用 API 不单独开启轮询
       setInterval(render, 1000);
       render();
       return;
