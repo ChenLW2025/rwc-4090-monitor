@@ -4,7 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>双 RTX 4090 公开脱敏监控工作台</title>
-<link rel="stylesheet" href="styles.css">
+<!-- L2：所有静态资源 URL 与交付版本绑定，发版即换 URL，避免旧 config
+     与新 app 混合（中间缓存不会把新版本页面和旧脚本拼装在一起）。
+     RWC_ASSET_VERSION 必须与 site/config.js 中的值一致。 -->
+<link rel="stylesheet" href="styles.css?v=20261024-l2-pdf1">
 </head>
 <body>
 <header class="site-header">
@@ -102,10 +105,10 @@
   </footer>
 </main>
 
-<script src="config.js"></script>
-<script src="js/canonical.js"></script>
-<script src="js/validate.js"></script>
-<script src="js/demo.js"></script>
-<script src="js/app.js"></script>
+<script src="config.js?v=20261024-l2-pdf1"></script>
+<script src="js/canonical.js?v=20261024-l2-pdf1"></script>
+<script src="js/validate.js?v=20261024-l2-pdf1"></script>
+<script src="js/demo.js?v=20261024-l2-pdf1"></script>
+<script src="js/app.js?v=20261024-l2-pdf1"></script>
 </body>
 </html>

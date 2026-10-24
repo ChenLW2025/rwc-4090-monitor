@@ -115,10 +115,31 @@
 
   // ------------------------------------------------------ 拉取
 
+  // L2：每轮缓存区分。cache:no-store 只表达浏览器意图，不能保证 GitHub
+  // Pages/CDN 或中间层的端到端新鲜度（实测 raw max-age=300 会让页面长期
+  // 读到旧 publication）。因此每次轮询都在 URL 上附加“轮询时间片”参数：
+  // 片长等于轮询周期（默认 15s），每个轮询周期的 URL 必然不同，从而明确
+  // 穿透中间缓存；参数值不参与任何数据判定，绝不用于给旧样本续命。
+  // 正确处理已有 query（用 & 追加）与 fragment（保持在末尾）；key/value
+  // 经 URLSearchParams 编码（URL 安全）。
+  function buildPollUrl(rawUrl, nowMs) {
+    var base = window.location && window.location.href
+      ? window.location.href : "http://localhost/";
+    var u = new URL(rawUrl, base);
+    var slice = Math.floor(nowMs / cfg.refreshIntervalMs);
+    u.searchParams.set("_rwc_poll", String(slice));
+    return u.toString();
+  }
+  // 暴露给测试/调试：记录每轮实际请求 URL（测试可连续捕获）
+  window.RWCBuildPollUrl = buildPollUrl;
+  window.__RWC_REQUEST_URLS__ = [];
+
   async function fetchOnce() {
     if (state.inflight) return;            // 单请求在途
     state.inflight = true;
     var mySeq = ++state.requestSeq;
+    var requestUrl = buildPollUrl(cfg.telemetryUrl, Date.now());
+    window.__RWC_REQUEST_URLS__.push(requestUrl);
     var controller = new AbortController();
     var timer = setTimeout(function () { controller.abort(); },
                            cfg.fetchTimeoutMs);
@@ -127,7 +148,7 @@
       state.mode = "error";   // 保留旧读数（不修改 lastGood），撤销有效结论
     }
     try {
-      var resp = await fetch(cfg.telemetryUrl, {
+      var resp = await fetch(requestUrl, {
         method: "GET",
         cache: "no-store",
         credentials: "omit",
@@ -185,8 +206,9 @@
     } else if (allKnown) {
       stateText = "正常";
       cls = "ok";
-    } else if (nullCount === 5 && gpu.error !== null) {
-      // 全部指标都不可用且带错误：该卡无任何有效读数
+    } else if (nullCount === 5) {
+      // 五个公开指标全部为 null（即使 gpu.error 恰为 null，这也是合法
+      // schema 形状）：该卡没有任何有效读数；有效指标为零个。
       stateText = "无有效读数";
       cls = "unknown";
     } else if (gpu.error !== null || nullCount > 0) {
