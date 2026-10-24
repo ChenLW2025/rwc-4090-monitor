@@ -1,5 +1,5 @@
 /* 公开部署配置：仅含公开快照地址、私有论文入口及已核实阶段说明。 */
-window.RWC_ASSET_VERSION = "20261024-status3";
+window.RWC_ASSET_VERSION = "20261024-status4";
 window.RWC_CONFIG = {
   "telemetryUrl": "https://raw.githubusercontent.com/linweichen-ai/rwc-4090-monitor/telemetry/telemetry/latest.json",
   "paperUrl": "https://github.com/linweichen-ai/mca-paper/blob/codex/mca-rwc-innovation/workstreams/rwc_4090/paper/rwc_v4_preliminary.pdf",
@@ -14,8 +14,8 @@ window.RWC_CONFIG = {
       "继续观察自动发布与网页数据时效，核验断线和休眠后的恢复。",
       "完成研究程序新包验收，再安排真实 20 图实验。"
     ],
-    "delivery": "新一版网页候选已收到，验收发现多个标签页同时打开及请求受限时的等待问题，已交回修订，尚未部署。研究程序新包仍在准备交付。",
+    "delivery": "新一版网页候选已收到，验收发现多个标签页同时打开及请求受限时的等待问题，已交回修订，尚未部署。研究程序新包已收到，独立验收仍有问题，继续修订。",
     "deploy": "本机在线时每 120 秒自动发布，未设置开机自启动；电脑离线时更新暂停。网页仍使用此前已部署版本，可能因缓存显示旧快照；请以采样时刻和 180 秒过期标记为准。",
-    "validity": "真实 20 图实验尚未运行，当前论文仍为私有 v4 初步稿，7 页 PDF 未新增实验结论，也不是投稿定稿。公开页面只展示脱敏运行状况和进度。"
+    "validity": "正式 20 图实验尚未运行，当前论文仍为私有 v4 初步稿，7 页 PDF 未新增实验结论，也不是投稿定稿。公开页面只展示脱敏运行状况和进度。"
   }
 };
